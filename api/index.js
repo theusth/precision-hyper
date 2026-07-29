@@ -6,42 +6,144 @@ const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 
-const required = ['SUPABASE_URL', 'SUPABASE_SECRET_KEY', 'JWT_SECRET', 'ADMIN_USER', 'ADMIN_PASSWORD_HASH'];
-for (const name of required) {
-  if (!process.env[name]) throw new Error(`Variável de ambiente ausente: ${name}`);
-}
-
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SECRET_KEY, {
-  auth: { persistSession: false, autoRefreshToken: false }
-});
-
 const app = express();
+
 app.set('trust proxy', 1);
-app.use(helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: false }));
+
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginResourcePolicy: false
+  })
+);
+
 app.use(express.json({ limit: '64kb' }));
-app.use(rateLimit({ windowMs: 60_000, limit: 200, standardHeaders: true, legacyHeaders: false }));
+
+app.use(
+  rateLimit({
+    windowMs: 60 * 1000,
+    limit: 200,
+    standardHeaders: true,
+    legacyHeaders: false
+  })
+);
+
+/* =========================
+   CONFIGURAÇÕES
+========================= */
+
+const SUPABASE_URL = process.env.SUPABASE_URL || '';
+const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY || '';
+const JWT_SECRET = process.env.JWT_SECRET || '';
+const ADMIN_USER = process.env.ADMIN_USER || 'admin';
+
+/*
+Você pode usar:
+
+ADMIN_PASSWORD=admin123
+
+ou, de forma mais segura:
+
+ADMIN_PASSWORD_HASH=$2a$...
+*/
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
+const ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH || '';
+
+const supabaseConfigured = Boolean(
+  SUPABASE_URL && SUPABASE_SECRET_KEY
+);
+
+const supabase = supabaseConfigured
+  ? createClient(SUPABASE_URL, SUPABASE_SECRET_KEY, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false
+      }
+    })
+  : null;
+
+/* =========================
+   CORS
+========================= */
 
 app.use((req, res, next) => {
-  const allowed = process.env.ALLOWED_ORIGIN;
   const origin = req.headers.origin;
-  if (!allowed || !origin || origin === allowed) {
-    if (origin) res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Vary', 'Origin');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-    if (req.method === 'OPTIONS') return res.status(204).end();
-    return next();
+  const allowedOrigin = process.env.ALLOWED_ORIGIN;
+
+  if (
+    allowedOrigin &&
+    origin &&
+    origin !== allowedOrigin
+  ) {
+    return res.status(403).json({
+      error: 'Origem não permitida.'
+    });
   }
-  return res.status(403).json({ error: 'Origem não permitida.' });
+
+  if (origin) {
+    res.setHeader(
+      'Access-Control-Allow-Origin',
+      allowedOrigin || origin
+    );
+  }
+
+  res.setHeader('Vary', 'Origin');
+
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'Content-Type, Authorization'
+  );
+
+  res.setHeader(
+    'Access-Control-Allow-Methods',
+    'GET, POST, DELETE, OPTIONS'
+  );
+
+  if (req.method === 'OPTIONS') {
+    return res.status(204).end();
+  }
+
+  next();
 });
 
-function normalizeKey(value) { return String(value || '').trim().toUpperCase(); }
-function daysLeft(expiresAt) { return Math.max(0, Math.ceil((new Date(expiresAt).getTime() - Date.now()) / 86400000)); }
-function statusOf(license) {
-  if (license.status === 'blocked') return 'blocked';
-  return new Date(license.expires_at).getTime() > Date.now() ? 'active' : 'expired';
+/* =========================
+   FUNÇÕES AUXILIARES
+========================= */
+
+function normalizeKey(value) {
+  return String(value || '')
+    .trim()
+    .toUpperCase();
 }
-function serialize(license) {
+
+function daysLeft(expiresAt) {
+  const expires = new Date(expiresAt).getTime();
+
+  if (!Number.isFinite(expires)) {
+    return 0;
+  }
+
+  return Math.max(
+    0,
+    Math.ceil((expires - Date.now()) / 86400000)
+  );
+}
+
+function statusOf(license) {
+  if (license.status === 'blocked') {
+    return 'blocked';
+  }
+
+  const expiration = new Date(
+    license.expires_at
+  ).getTime();
+
+  return expiration > Date.now()
+    ? 'active'
+    : 'expired';
+}
+
+function serializeLicense(license) {
   return {
     id: license.id,
     key: license.key,
@@ -57,153 +159,904 @@ function serialize(license) {
     os: license.os
   };
 }
-async function addLog(type, details = {}) {
-  await supabase.from('logs').insert({ type, details });
-}
+
 function randomKey() {
-  const chunk = () => crypto.randomBytes(3).toString('hex').toUpperCase();
+  const chunk = () =>
+    crypto
+      .randomBytes(3)
+      .toString('hex')
+      .toUpperCase();
+
   return `PRECISION-${chunk()}-${chunk()}-${chunk()}`;
 }
-function auth(req, res, next) {
-  const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+
+function requireSupabase(res) {
+  if (supabase) {
+    return true;
+  }
+
+  res.status(500).json({
+    error:
+      'Supabase não configurado. Adicione SUPABASE_URL e SUPABASE_SECRET_KEY na Vercel.'
+  });
+
+  return false;
+}
+
+function safeStringCompare(valueA, valueB) {
+  const first = Buffer.from(
+    String(valueA).padEnd(256).slice(0, 256)
+  );
+
+  const second = Buffer.from(
+    String(valueB).padEnd(256).slice(0, 256)
+  );
+
+  return crypto.timingSafeEqual(first, second);
+}
+
+async function checkAdminPassword(password) {
+  if (ADMIN_PASSWORD_HASH) {
+    try {
+      return await bcrypt.compare(
+        password,
+        ADMIN_PASSWORD_HASH
+      );
+    } catch (error) {
+      console.error(
+        'Hash de senha inválido:',
+        error.message
+      );
+
+      return false;
+    }
+  }
+
+  if (ADMIN_PASSWORD) {
+    return safeStringCompare(
+      password,
+      ADMIN_PASSWORD
+    );
+  }
+
+  return false;
+}
+
+async function addLog(type, details = {}) {
+  if (!supabase) {
+    return;
+  }
+
   try {
-    req.admin = jwt.verify(token, process.env.JWT_SECRET);
-    if (req.admin.role !== 'admin') throw new Error('invalid role');
-    next();
-  } catch {
-    res.status(401).json({ error: 'Não autorizado.' });
+    const { error } = await supabase
+      .from('logs')
+      .insert({
+        type,
+        details
+      });
+
+    if (error) {
+      console.error(
+        'Erro ao registrar log:',
+        error.message
+      );
+    }
+  } catch (error) {
+    /*
+    Um erro na tabela de logs não pode impedir
+    o usuário de entrar no painel.
+    */
+    console.error(
+      'Erro inesperado no log:',
+      error.message
+    );
   }
 }
+
 async function getLicenseByKey(key) {
-  const { data, error } = await supabase.from('licenses').select('*').ilike('key', normalizeKey(key)).maybeSingle();
-  if (error) throw error;
+  if (!supabase) {
+    throw new Error('Supabase não configurado.');
+  }
+
+  const normalizedKey = normalizeKey(key);
+
+  const { data, error } = await supabase
+    .from('licenses')
+    .select('*')
+    .eq('key', normalizedKey)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
   return data;
 }
 
-app.get(['/health', '/api/health'], (_req, res) => res.json({ ok: true, service: 'Precision Fix API', version: '2.0.0' }));
-
-app.post(['/login', '/api/login'], async (req, res) => {
-  try {
-    const username = String(req.body?.username || '');
-    const password = String(req.body?.password || '');
-    const okUser = crypto.timingSafeEqual(Buffer.from(username.padEnd(128).slice(0,128)), Buffer.from(process.env.ADMIN_USER.padEnd(128).slice(0,128)));
-    const okPass = await bcrypt.compare(password, process.env.ADMIN_PASSWORD_HASH);
-    await addLog(okUser && okPass ? 'ADMIN_LOGIN' : 'ADMIN_LOGIN_FAILED', { username, ip: req.ip });
-    if (!okUser || !okPass) return res.status(401).json({ error: 'Usuário ou senha inválidos.' });
-    return res.json({ token: jwt.sign({ role: 'admin', username }, process.env.JWT_SECRET, { expiresIn: '8h' }) });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: 'Erro interno.' });
+function adminAuth(req, res, next) {
+  if (!JWT_SECRET) {
+    return res.status(500).json({
+      error:
+        'JWT_SECRET não configurado na Vercel.'
+    });
   }
-});
 
-app.post(['/license/validate', '/api/license/validate'], async (req, res) => {
+  const authorization = String(
+    req.headers.authorization || ''
+  );
+
+  const token = authorization.replace(
+    /^Bearer\s+/i,
+    ''
+  );
+
+  if (!token) {
+    return res.status(401).json({
+      error: 'Token não informado.'
+    });
+  }
+
   try {
-    const key = normalizeKey(req.body?.key);
-    const hwid = String(req.body?.hwid || '').trim();
-    const clientName = String(req.body?.clientName || 'Cliente').trim();
-    const os = String(req.body?.os || 'Windows').trim();
-    const license = await getLicenseByKey(key);
+    const decoded = jwt.verify(
+      token,
+      JWT_SECRET
+    );
+
+    if (decoded.role !== 'admin') {
+      return res.status(403).json({
+        error: 'Acesso negado.'
+      });
+    }
+
+    req.admin = decoded;
+    next();
+  } catch {
+    return res.status(401).json({
+      error: 'Sessão inválida ou expirada.'
+    });
+  }
+}
+
+/* =========================
+   SAÚDE DA API
+========================= */
+
+app.get(
+  ['/', '/health', '/api/health'],
+  (_req, res) => {
+    return res.json({
+      ok: true,
+      service: 'Precision Fix API',
+      version: '3.0.0',
+      configuration: {
+        supabase: supabaseConfigured,
+        jwt: Boolean(JWT_SECRET),
+        adminUser: Boolean(ADMIN_USER),
+        adminPassword: Boolean(
+          ADMIN_PASSWORD ||
+          ADMIN_PASSWORD_HASH
+        )
+      }
+    });
+  }
+);
+
+/* =========================
+   LOGIN ADMIN
+========================= */
+
+app.post(
+  ['/login', '/api/login'],
+  async (req, res) => {
+    try {
+      if (!JWT_SECRET) {
+        return res.status(500).json({
+          error:
+            'JWT_SECRET não configurado na Vercel.'
+        });
+      }
+
+      if (
+        !ADMIN_PASSWORD &&
+        !ADMIN_PASSWORD_HASH
+      ) {
+        return res.status(500).json({
+          error:
+            'Configure ADMIN_PASSWORD ou ADMIN_PASSWORD_HASH na Vercel.'
+        });
+      }
+
+      const username = String(
+        req.body?.username || ''
+      ).trim();
+
+      const password = String(
+        req.body?.password || ''
+      );
+
+      if (!username || !password) {
+        return res.status(400).json({
+          error:
+            'Informe o usuário e a senha.'
+        });
+      }
+
+      const validUser = safeStringCompare(
+        username,
+        ADMIN_USER
+      );
+
+      const validPassword =
+        await checkAdminPassword(password);
+
+      await addLog(
+        validUser && validPassword
+          ? 'ADMIN_LOGIN'
+          : 'ADMIN_LOGIN_FAILED',
+        {
+          username,
+          ip: req.ip
+        }
+      );
+
+      if (!validUser || !validPassword) {
+        return res.status(401).json({
+          error:
+            'Usuário ou senha inválidos.'
+        });
+      }
+
+      const token = jwt.sign(
+        {
+          role: 'admin',
+          username
+        },
+        JWT_SECRET,
+        {
+          expiresIn: '8h'
+        }
+      );
+
+      return res.json({
+        token,
+        user: {
+          username
+        }
+      });
+    } catch (error) {
+      console.error(
+        'Erro no login:',
+        error
+      );
+
+      return res.status(500).json({
+        error:
+          'Erro interno ao realizar login.'
+      });
+    }
+  }
+);
+
+/* =========================
+   VALIDAR LICENÇA
+========================= */
+
+app.post(
+  ['/license/validate', '/api/license/validate'],
+  async (req, res) => {
+    try {
+      if (!requireSupabase(res)) {
+        return;
+      }
+
+      const key = normalizeKey(
+        req.body?.key
+      );
+
+      const hwid = String(
+        req.body?.hwid || ''
+      ).trim();
+
+      const clientName = String(
+        req.body?.clientName || 'Cliente'
+      ).trim();
+
+      const os = String(
+        req.body?.os || 'Windows'
+      ).trim();
+
+      if (!key) {
+        return res.status(400).json({
+          valid: false,
+          error: 'Key não informada.'
+        });
+      }
+
+      if (!hwid) {
+        return res.status(400).json({
+          valid: false,
+          error: 'HWID não informado.'
+        });
+      }
+
+      const license =
+        await getLicenseByKey(key);
+
+      if (!license) {
+        await addLog('INVALID_KEY', {
+          key,
+          ip: req.ip
+        });
+
+        return res.status(404).json({
+          valid: false,
+          error: 'Key inválida.'
+        });
+      }
+
+      const currentStatus =
+        statusOf(license);
+
+      if (currentStatus !== 'active') {
+        await addLog('LICENSE_DENIED', {
+          key,
+          status: currentStatus,
+          ip: req.ip
+        });
+
+        return res.status(403).json({
+          valid: false,
+          error:
+            currentStatus === 'blocked'
+              ? 'Licença bloqueada.'
+              : 'Licença expirada.'
+        });
+      }
+
+      if (
+        license.hwid &&
+        license.hwid !== hwid
+      ) {
+        await addLog('HWID_MISMATCH', {
+          key,
+          oldHwid: license.hwid,
+          newHwid: hwid,
+          ip: req.ip
+        });
+
+        return res.status(403).json({
+          valid: false,
+          error:
+            'HWID diferente. Resete a Key no painel.'
+        });
+      }
+
+      const updates = {
+        client_name:
+          clientName ||
+          license.client_name,
+        os,
+        last_ip: req.ip,
+        last_login:
+          new Date().toISOString()
+      };
+
+      if (!license.hwid) {
+        updates.hwid = hwid;
+
+        updates.activated_at =
+          new Date().toISOString();
+
+        await addLog('HWID_BOUND', {
+          key,
+          hwid
+        });
+      }
+
+      const { data, error } =
+        await supabase
+          .from('licenses')
+          .update(updates)
+          .eq('id', license.id)
+          .select('*')
+          .single();
+
+      if (error) {
+        throw error;
+      }
+
+      await addLog('LICENSE_LOGIN', {
+        key,
+        hwid,
+        ip: req.ip
+      });
+
+      return res.json({
+        valid: true,
+        license: serializeLicense(data)
+      });
+    } catch (error) {
+      console.error(
+        'Erro na validação:',
+        error
+      );
+
+      return res.status(500).json({
+        valid: false,
+        error:
+          error.message ||
+          'Erro interno na validação.'
+      });
+    }
+  }
+);
+
+/* =========================
+   DASHBOARD
+========================= */
+
+app.get(
+  ['/dashboard', '/api/dashboard'],
+  adminAuth,
+  async (_req, res) => {
+    try {
+      if (!requireSupabase(res)) {
+        return;
+      }
+
+      const { data, error } =
+        await supabase
+          .from('licenses')
+          .select('status, expires_at');
+
+      if (error) {
+        throw error;
+      }
+
+      const licenses = data || [];
+
+      const statuses =
+        licenses.map(statusOf);
+
+      return res.json({
+        totalKeys: licenses.length,
+
+        active: statuses.filter(
+          (status) =>
+            status === 'active'
+        ).length,
+
+        expired: statuses.filter(
+          (status) =>
+            status === 'expired'
+        ).length,
+
+        blocked: statuses.filter(
+          (status) =>
+            status === 'blocked'
+        ).length
+      });
+    } catch (error) {
+      console.error(
+        'Erro no dashboard:',
+        error
+      );
+
+      return res.status(500).json({
+        error:
+          error.message ||
+          'Erro ao carregar dashboard.'
+      });
+    }
+  }
+);
+
+/* =========================
+   LISTAR LICENÇAS
+========================= */
+
+app.get(
+  ['/licenses', '/api/licenses'],
+  adminAuth,
+  async (_req, res) => {
+    try {
+      if (!requireSupabase(res)) {
+        return;
+      }
+
+      const { data, error } =
+        await supabase
+          .from('licenses')
+          .select('*')
+          .order('created_at', {
+            ascending: false
+          });
+
+      if (error) {
+        throw error;
+      }
+
+      return res.json(
+        (data || []).map(
+          serializeLicense
+        )
+      );
+    } catch (error) {
+      console.error(
+        'Erro ao listar licenças:',
+        error
+      );
+
+      return res.status(500).json({
+        error:
+          error.message ||
+          'Erro ao listar licenças.'
+      });
+    }
+  }
+);
+
+/* =========================
+   CRIAR LICENÇA
+========================= */
+
+app.post(
+  ['/license/create', '/api/license/create'],
+  adminAuth,
+  async (req, res) => {
+    try {
+      if (!requireSupabase(res)) {
+        return;
+      }
+
+      const requestedDays = Number(
+        req.body?.days || 30
+      );
+
+      const days = Math.max(
+        1,
+        Math.min(
+          3650,
+          Number.isFinite(requestedDays)
+            ? Math.floor(requestedDays)
+            : 30
+        )
+      );
+
+      const key = normalizeKey(
+        req.body?.key || randomKey()
+      );
+
+      const clientName = String(
+        req.body?.clientName ||
+        'Novo cliente'
+      ).trim();
+
+      const payload = {
+        key,
+        client_name: clientName,
+        expires_at: new Date(
+          Date.now() +
+          days * 86400000
+        ).toISOString(),
+        status: 'active'
+      };
+
+      const { data, error } =
+        await supabase
+          .from('licenses')
+          .insert(payload)
+          .select('*')
+          .single();
+
+      if (error) {
+        if (error.code === '23505') {
+          return res.status(409).json({
+            error: 'Essa Key já existe.'
+          });
+        }
+
+        throw error;
+      }
+
+      await addLog(
+        'LICENSE_CREATED',
+        {
+          key,
+          days,
+          clientName
+        }
+      );
+
+      return res
+        .status(201)
+        .json(serializeLicense(data));
+    } catch (error) {
+      console.error(
+        'Erro ao criar licença:',
+        error
+      );
+
+      return res.status(500).json({
+        error:
+          error.message ||
+          'Erro ao criar licença.'
+      });
+    }
+  }
+);
+
+/* =========================
+   ALTERAR LICENÇA
+========================= */
+
+async function mutateLicense(
+  req,
+  res,
+  action
+) {
+  try {
+    if (!requireSupabase(res)) {
+      return;
+    }
+
+    const key = normalizeKey(
+      req.body?.key
+    );
+
+    if (!key) {
+      return res.status(400).json({
+        error: 'Key não informada.'
+      });
+    }
+
+    const license =
+      await getLicenseByKey(key);
+
     if (!license) {
-      await addLog('INVALID_KEY', { key, ip: req.ip });
-      return res.status(404).json({ valid: false, error: 'Key inválida.' });
+      return res.status(404).json({
+        error: 'Key não encontrada.'
+      });
     }
-    const currentStatus = statusOf(license);
-    if (currentStatus !== 'active') {
-      await addLog('LICENSE_DENIED', { key, status: currentStatus, ip: req.ip });
-      return res.status(403).json({ valid: false, error: currentStatus === 'blocked' ? 'Licença bloqueada.' : 'Licença expirada.' });
-    }
-    if (!hwid) return res.status(400).json({ valid: false, error: 'HWID ausente.' });
-    if (license.hwid && license.hwid !== hwid) {
-      await addLog('HWID_MISMATCH', { key, oldHwid: license.hwid, newHwid: hwid, ip: req.ip });
-      return res.status(403).json({ valid: false, error: 'HWID diferente. Resete a Key no painel administrativo.' });
-    }
-    const updates = {
-      client_name: clientName || license.client_name,
-      os,
-      last_ip: req.ip,
-      last_login: new Date().toISOString()
-    };
-    if (!license.hwid) {
-      updates.hwid = hwid;
-      updates.activated_at = new Date().toISOString();
-      await addLog('HWID_BOUND', { key, hwid });
-    }
-    const { data, error } = await supabase.from('licenses').update(updates).eq('id', license.id).select('*').single();
-    if (error) throw error;
-    await addLog('LICENSE_LOGIN', { key, hwid, ip: req.ip });
-    return res.json({ valid: true, license: serialize(data) });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ valid: false, error: 'Erro interno na validação.' });
-  }
-});
 
-app.get(['/licenses', '/api/licenses'], auth, async (_req, res) => {
-  const { data, error } = await supabase.from('licenses').select('*').order('created_at', { ascending: false });
-  if (error) return res.status(500).json({ error: error.message });
-  return res.json(data.map(serialize));
-});
-
-app.get(['/dashboard', '/api/dashboard'], auth, async (_req, res) => {
-  const { data, error } = await supabase.from('licenses').select('status,expires_at');
-  if (error) return res.status(500).json({ error: error.message });
-  const statuses = data.map(statusOf);
-  return res.json({ totalKeys: data.length, active: statuses.filter(s => s === 'active').length, expired: statuses.filter(s => s === 'expired').length, blocked: statuses.filter(s => s === 'blocked').length });
-});
-
-app.get(['/logs', '/api/logs'], auth, async (_req, res) => {
-  const { data, error } = await supabase.from('logs').select('*').order('created_at', { ascending: false }).limit(500);
-  if (error) return res.status(500).json({ error: error.message });
-  return res.json(data.map(log => ({ id: log.id, type: log.type, details: log.details, createdAt: log.created_at })));
-});
-
-app.post(['/license/create', '/api/license/create'], auth, async (req, res) => {
-  const days = Math.max(1, Math.min(3650, Number(req.body?.days || 30)));
-  const key = normalizeKey(req.body?.key || randomKey());
-  const payload = { key, client_name: String(req.body?.clientName || 'Novo cliente').trim(), expires_at: new Date(Date.now() + days * 86400000).toISOString(), status: 'active' };
-  const { data, error } = await supabase.from('licenses').insert(payload).select('*').single();
-  if (error) return res.status(error.code === '23505' ? 409 : 500).json({ error: error.code === '23505' ? 'Key já existe.' : error.message });
-  await addLog('LICENSE_CREATED', { key, days, clientName: payload.client_name });
-  return res.status(201).json(serialize(data));
-});
-
-async function mutate(req, res, action) {
-  try {
-    const key = normalizeKey(req.body?.key);
-    const license = await getLicenseByKey(key);
-    if (!license) return res.status(404).json({ error: 'Key não encontrada.' });
     let updates = {};
-    if (action === 'reset-hwid') updates = { hwid: null, activated_at: null };
-    if (action === 'block') updates = { status: 'blocked' };
-    if (action === 'unblock') updates = { status: 'active' };
-    if (action === 'renew') {
-      const days = Math.max(1, Math.min(3650, Number(req.body?.days || 30)));
-      const base = Math.max(Date.now(), new Date(license.expires_at).getTime() || Date.now());
-      updates = { expires_at: new Date(base + days * 86400000).toISOString(), status: 'active' };
+
+    if (action === 'reset-hwid') {
+      updates = {
+        hwid: null,
+        activated_at: null
+      };
     }
-    const { data, error } = await supabase.from('licenses').update(updates).eq('id', license.id).select('*').single();
-    if (error) throw error;
-    await addLog(`LICENSE_${action.toUpperCase().replaceAll('-', '_')}`, { key });
-    return res.json({ ok: true, license: serialize(data) });
+
+    if (action === 'block') {
+      updates = {
+        status: 'blocked'
+      };
+    }
+
+    if (action === 'unblock') {
+      updates = {
+        status: 'active'
+      };
+    }
+
+    if (action === 'renew') {
+      const requestedDays = Number(
+        req.body?.days || 30
+      );
+
+      const days = Math.max(
+        1,
+        Math.min(
+          3650,
+          Number.isFinite(requestedDays)
+            ? Math.floor(requestedDays)
+            : 30
+        )
+      );
+
+      const currentExpiration =
+        new Date(
+          license.expires_at
+        ).getTime();
+
+      const baseDate = Math.max(
+        Date.now(),
+        Number.isFinite(
+          currentExpiration
+        )
+          ? currentExpiration
+          : Date.now()
+      );
+
+      updates = {
+        expires_at: new Date(
+          baseDate +
+          days * 86400000
+        ).toISOString(),
+        status: 'active'
+      };
+    }
+
+    const { data, error } =
+      await supabase
+        .from('licenses')
+        .update(updates)
+        .eq('id', license.id)
+        .select('*')
+        .single();
+
+    if (error) {
+      throw error;
+    }
+
+    await addLog(
+      `LICENSE_${action
+        .toUpperCase()
+        .replaceAll('-', '_')}`,
+      {
+        key
+      }
+    );
+
+    return res.json({
+      ok: true,
+      license:
+        serializeLicense(data)
+    });
   } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: 'Erro interno.' });
+    console.error(
+      `Erro na ação ${action}:`,
+      error
+    );
+
+    return res.status(500).json({
+      error:
+        error.message ||
+        'Erro interno.'
+    });
   }
 }
-for (const action of ['reset-hwid', 'block', 'unblock', 'renew']) {
-  app.post([`/license/${action}`, `/api/license/${action}`], auth, (req, res) => mutate(req, res, action));
+
+for (const action of [
+  'reset-hwid',
+  'block',
+  'unblock',
+  'renew'
+]) {
+  app.post(
+    [
+      `/license/${action}`,
+      `/api/license/${action}`
+    ],
+    adminAuth,
+    (req, res) =>
+      mutateLicense(
+        req,
+        res,
+        action
+      )
+  );
 }
 
-app.delete(['/license/:key', '/api/license/:key'], auth, async (req, res) => {
-  const key = normalizeKey(req.params.key);
-  const license = await getLicenseByKey(key);
-  if (!license) return res.status(404).json({ error: 'Key não encontrada.' });
-  const { error } = await supabase.from('licenses').delete().eq('id', license.id);
-  if (error) return res.status(500).json({ error: error.message });
-  await addLog('LICENSE_DELETED', { key });
-  return res.json({ ok: true });
+/* =========================
+   EXCLUIR LICENÇA
+========================= */
+
+app.delete(
+  ['/license/:key', '/api/license/:key'],
+  adminAuth,
+  async (req, res) => {
+    try {
+      if (!requireSupabase(res)) {
+        return;
+      }
+
+      const key = normalizeKey(
+        req.params.key
+      );
+
+      const license =
+        await getLicenseByKey(key);
+
+      if (!license) {
+        return res.status(404).json({
+          error: 'Key não encontrada.'
+        });
+      }
+
+      const { error } =
+        await supabase
+          .from('licenses')
+          .delete()
+          .eq('id', license.id);
+
+      if (error) {
+        throw error;
+      }
+
+      await addLog(
+        'LICENSE_DELETED',
+        {
+          key
+        }
+      );
+
+      return res.json({
+        ok: true
+      });
+    } catch (error) {
+      console.error(
+        'Erro ao excluir licença:',
+        error
+      );
+
+      return res.status(500).json({
+        error:
+          error.message ||
+          'Erro ao excluir licença.'
+      });
+    }
+  }
+);
+
+/* =========================
+   LOGS
+========================= */
+
+app.get(
+  ['/logs', '/api/logs'],
+  adminAuth,
+  async (_req, res) => {
+    try {
+      if (!requireSupabase(res)) {
+        return;
+      }
+
+      const { data, error } =
+        await supabase
+          .from('logs')
+          .select('*')
+          .order('created_at', {
+            ascending: false
+          })
+          .limit(500);
+
+      if (error) {
+        throw error;
+      }
+
+      return res.json(
+        (data || []).map((log) => ({
+          id: log.id,
+          type: log.type,
+          details: log.details,
+          createdAt: log.created_at
+        }))
+      );
+    } catch (error) {
+      console.error(
+        'Erro ao carregar logs:',
+        error
+      );
+
+      return res.status(500).json({
+        error:
+          error.message ||
+          'Erro ao carregar logs.'
+      });
+    }
+  }
+);
+
+/* =========================
+   ROTA NÃO ENCONTRADA
+========================= */
+
+app.use((req, res) => {
+  return res.status(404).json({
+    error: 'Rota não encontrada.'
+  });
 });
 
-app.use((req, res) => res.status(404).json({ error: 'Rota não encontrada.' }));
 module.exports = app;
