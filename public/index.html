@@ -39,7 +39,7 @@
 
       <p id="loginMessage" class="error"></p>
 
-      <small>hyperFPS</small>
+      <small>Hyper FPS</small>
     </form>
   </section>
 
@@ -49,19 +49,19 @@
 
       <h2>PRECISION FIX</h2>
 
-      <button class="nav active" data-page="dashboard">
+      <button type="button" class="nav active" data-page="dashboard">
         Dashboard
       </button>
 
-      <button class="nav" data-page="licenses">
+      <button type="button" class="nav" data-page="licenses">
         Licenças
       </button>
 
-      <button class="nav" data-page="logs">
+      <button type="button" class="nav" data-page="logs">
         Logs
       </button>
 
-      <button id="logout">
+      <button type="button" id="logout">
         Sair
       </button>
     </aside>
@@ -163,7 +163,11 @@
                 </tr>
               </thead>
 
-              <tbody id="licenseRows"></tbody>
+              <tbody id="licenseRows">
+                <tr>
+                  <td colspan="6">Nenhuma licença carregada.</td>
+                </tr>
+              </tbody>
             </table>
           </div>
         </section>
@@ -172,7 +176,9 @@
       <div id="logsPage" class="page hidden">
         <section class="panel">
           <h2>Logs</h2>
-          <div id="allLogs" class="logs"></div>
+          <div id="allLogs" class="logs">
+            <p>Sem logs disponíveis.</p>
+          </div>
         </section>
       </div>
     </main>
