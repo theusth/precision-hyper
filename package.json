@@ -1,0 +1,15 @@
+{
+  "name": "precision-fix-admin-vercel",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Painel administrativo e API de licenças do Precision Fix para Vercel + Supabase",
+  "engines": { "node": "22.x" },
+  "dependencies": {
+    "@supabase/supabase-js": "2.57.4",
+    "bcryptjs": "3.0.2",
+    "express": "5.1.0",
+    "express-rate-limit": "7.5.1",
+    "helmet": "8.1.0",
+    "jsonwebtoken": "9.0.2"
+  }
+}

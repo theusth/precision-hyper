@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Precision Fix — Painel Admin</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <section id="loginView" class="center-screen">
+    <form id="loginForm" class="login-card">
+      <img src="hyper-fps.png" alt="Hyper FPS">
+      <h1>PAINEL ADMIN</h1>
+      <input id="username" value="admin" autocomplete="username" placeholder="Usuário">
+      <input id="password" type="password" value="admin123" autocomplete="current-password" placeholder="Senha">
+      <button type="submit">ENTRAR</button>
+      <p id="loginMessage"></p>
+      <small>Padrão local: admin / admin123</small>
+    </form>
+  </section>
+
+  <section id="dashboardView" class="hidden">
+    <aside>
+      <img src="hyper-fps.png" alt="Hyper FPS">
+      <h2>PRECISION FIX</h2>
+      <button class="nav active" data-page="dashboard">Dashboard</button>
+      <button class="nav" data-page="licenses">Licenças</button>
+      <button class="nav" data-page="logs">Logs</button>
+      <button id="logout">Sair</button>
+    </aside>
+    <main>
+      <header><div><h1 id="pageTitle">Dashboard</h1><p>Gerenciamento local de licenças</p></div><span class="online">● API ONLINE</span></header>
+
+      <div id="dashboardPage" class="page">
+        <div class="cards">
+          <article><span>Total de Keys</span><b id="totalKeys">0</b></article>
+          <article><span>Ativas</span><b id="activeKeys">0</b></article>
+          <article><span>Expiradas</span><b id="expiredKeys">0</b></article>
+          <article><span>Bloqueadas</span><b id="blockedKeys">0</b></article>
+          <article><span>Ativações hoje</span><b id="activationsToday">0</b></article>
+        </div>
+        <section class="panel"><h3>Atividades recentes</h3><div id="recentLogs"></div></section>
+      </div>
+
+      <div id="licensesPage" class="page hidden">
+        <section class="panel create-panel">
+          <h3>Criar licença</h3>
+          <div class="form-grid">
+            <input id="clientName" placeholder="Nome do cliente">
+            <input id="customKey" placeholder="Key personalizada (opcional)">
+            <input id="days" type="number" min="1" max="3650" value="30" placeholder="Dias">
+            <button id="createLicense">GERAR KEY</button>
+          </div>
+          <p id="actionMessage"></p>
+        </section>
+        <section class="panel table-wrap"><div class="toolbar"><h3>Licenças</h3><input id="search" placeholder="Pesquisar key ou cliente"></div><table><thead><tr><th>Cliente</th><th>Key</th><th>Status</th><th>Dias</th><th>HWID</th><th>Ações</th></tr></thead><tbody id="licenseRows"></tbody></table></section>
+      </div>
+
+      <div id="logsPage" class="page hidden"><section class="panel"><h3>Logs</h3><div id="allLogs"></div></section></div>
+    </main>
+  </section>
+  <script src="app.js"></script>
+</body>
+</html>
