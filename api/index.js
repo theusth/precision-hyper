@@ -32,22 +32,36 @@ app.use(
    CONFIGURAÇÕES
 ========================= */
 
-const SUPABASE_URL = process.env.SUPABASE_URL || '';
-const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY || '';
-const JWT_SECRET = process.env.JWT_SECRET || '';
-const ADMIN_USER = process.env.ADMIN_USER || 'admin';
+function readEnv(...names) {
+  for (const name of names) {
+    const value = process.env[name];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return '';
+}
 
-/*
-Você pode usar:
+const SUPABASE_URL = readEnv('SUPABASE_URL');
+const SUPABASE_SECRET_KEY = readEnv(
+  'SUPABASE_SECRET_KEY',
+  'SUPABASE_SERVICE_ROLE_KEY',
+  'SUPABASE_SERVICE_KEY'
+);
+const JWT_SECRET = readEnv('JWT_SECRET', 'JWT_SECRET_KEY', 'PF_JWT_SECRET');
+const ADMIN_USER = readEnv('ADMIN_USER', 'ADMIN_USERNAME') || 'admin';
+const ADMIN_PASSWORD = readEnv('ADMIN_PASSWORD');
+const ADMIN_PASSWORD_HASH = readEnv('ADMIN_PASSWORD_HASH');
 
-ADMIN_PASSWORD=admin123
-
-ou, de forma mais segura:
-
-ADMIN_PASSWORD_HASH=$2a$...
-*/
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
-const ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH || '';
+const missingEnvironmentVariables = () => {
+  const missing = [];
+  if (!SUPABASE_URL) missing.push('SUPABASE_URL');
+  if (!SUPABASE_SECRET_KEY) missing.push('SUPABASE_SECRET_KEY');
+  if (!JWT_SECRET) missing.push('JWT_SECRET');
+  if (!ADMIN_USER) missing.push('ADMIN_USER');
+  if (!ADMIN_PASSWORD && !ADMIN_PASSWORD_HASH) {
+    missing.push('ADMIN_PASSWORD ou ADMIN_PASSWORD_HASH');
+  }
+  return missing;
+};
 
 const supabaseConfigured = Boolean(
   SUPABASE_URL && SUPABASE_SECRET_KEY
@@ -277,7 +291,7 @@ function adminAuth(req, res, next) {
   if (!JWT_SECRET) {
     return res.status(500).json({
       error:
-        'JWT_SECRET não configurado na Vercel.'
+        'JWT_SECRET não foi carregado. Apague e recrie essa variável na Vercel e faça um novo Redeploy.'
     });
   }
 
@@ -332,10 +346,8 @@ app.get(
         supabase: supabaseConfigured,
         jwt: Boolean(JWT_SECRET),
         adminUser: Boolean(ADMIN_USER),
-        adminPassword: Boolean(
-          ADMIN_PASSWORD ||
-          ADMIN_PASSWORD_HASH
-        )
+        adminPassword: Boolean(ADMIN_PASSWORD || ADMIN_PASSWORD_HASH),
+        missing: missingEnvironmentVariables()
       }
     });
   }
@@ -352,7 +364,7 @@ app.post(
       if (!JWT_SECRET) {
         return res.status(500).json({
           error:
-            'JWT_SECRET não configurado na Vercel.'
+            'JWT_SECRET não foi carregado. Apague e recrie essa variável na Vercel e faça um novo Redeploy.'
         });
       }
 
