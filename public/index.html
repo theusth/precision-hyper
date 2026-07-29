@@ -3,62 +3,181 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+
   <title>Precision Fix — Painel Admin</title>
-  <link rel="stylesheet" href="style.css">
+
+  <link rel="stylesheet" href="/admin.css">
 </head>
 <body>
-  <section id="loginView" class="center-screen">
+  <section id="loginView" class="center-view">
     <form id="loginForm" class="login-card">
-      <img src="hyper-fps.png" alt="Hyper FPS">
+      <img src="/hyper-fps.png" alt="Hyper FPS">
+
       <h1>PAINEL ADMIN</h1>
-      <input id="username" value="admin" autocomplete="username" placeholder="Usuário">
-      <input id="password" type="password" value="admin123" autocomplete="current-password" placeholder="Senha">
+
+      <p>Gerenciamento de licenças Precision Fix</p>
+
+      <input
+        id="username"
+        type="text"
+        value="admin"
+        autocomplete="username"
+        placeholder="Usuário"
+        required
+      >
+
+      <input
+        id="password"
+        type="password"
+        value="admin123"
+        autocomplete="current-password"
+        placeholder="Senha"
+        required
+      >
+
       <button type="submit">ENTRAR</button>
-      <p id="loginMessage"></p>
+
+      <p id="loginMessage" class="error"></p>
+
       <small>Padrão local: admin / admin123</small>
     </form>
   </section>
 
-  <section id="dashboardView" class="hidden">
+  <section id="dashboardView" class="dashboard hidden">
     <aside>
-      <img src="hyper-fps.png" alt="Hyper FPS">
+      <img src="/hyper-fps.png" alt="Hyper FPS">
+
       <h2>PRECISION FIX</h2>
-      <button class="nav active" data-page="dashboard">Dashboard</button>
-      <button class="nav" data-page="licenses">Licenças</button>
-      <button class="nav" data-page="logs">Logs</button>
-      <button id="logout">Sair</button>
+
+      <button class="nav active" data-page="dashboard">
+        Dashboard
+      </button>
+
+      <button class="nav" data-page="licenses">
+        Licenças
+      </button>
+
+      <button class="nav" data-page="logs">
+        Logs
+      </button>
+
+      <button id="logout">
+        Sair
+      </button>
     </aside>
+
     <main>
-      <header><div><h1 id="pageTitle">Dashboard</h1><p>Gerenciamento local de licenças</p></div><span class="online">● API ONLINE</span></header>
+      <header>
+        <div>
+          <h1 id="pageTitle">Dashboard</h1>
+          <p>Gerenciamento de licenças</p>
+        </div>
+
+        <span class="online">● API ONLINE</span>
+      </header>
 
       <div id="dashboardPage" class="page">
-        <div class="cards">
-          <article><span>Total de Keys</span><b id="totalKeys">0</b></article>
-          <article><span>Ativas</span><b id="activeKeys">0</b></article>
-          <article><span>Expiradas</span><b id="expiredKeys">0</b></article>
-          <article><span>Bloqueadas</span><b id="blockedKeys">0</b></article>
-          <article><span>Ativações hoje</span><b id="activationsToday">0</b></article>
-        </div>
-        <section class="panel"><h3>Atividades recentes</h3><div id="recentLogs"></div></section>
+        <section class="stats">
+          <article>
+            <span>Total de Keys</span>
+            <strong id="totalKeys">0</strong>
+          </article>
+
+          <article>
+            <span>Ativas</span>
+            <strong id="activeKeys">0</strong>
+          </article>
+
+          <article>
+            <span>Expiradas</span>
+            <strong id="expiredKeys">0</strong>
+          </article>
+
+          <article>
+            <span>Bloqueadas</span>
+            <strong id="blockedKeys">0</strong>
+          </article>
+        </section>
+
+        <section class="panel">
+          <h2>Atividades recentes</h2>
+          <div id="recentLogs" class="logs"></div>
+        </section>
       </div>
 
       <div id="licensesPage" class="page hidden">
-        <section class="panel create-panel">
-          <h3>Criar licença</h3>
+        <section class="panel">
+          <h2>Criar licença</h2>
+
           <div class="form-grid">
-            <input id="clientName" placeholder="Nome do cliente">
-            <input id="customKey" placeholder="Key personalizada (opcional)">
-            <input id="days" type="number" min="1" max="3650" value="30" placeholder="Dias">
-            <button id="createLicense">GERAR KEY</button>
+            <input
+              id="clientName"
+              type="text"
+              placeholder="Nome do cliente"
+            >
+
+            <input
+              id="days"
+              type="number"
+              min="1"
+              max="3650"
+              value="30"
+              placeholder="Dias"
+            >
+
+            <input
+              id="customKey"
+              type="text"
+              placeholder="Key personalizada (opcional)"
+            >
+
+            <button id="createLicense" type="button">
+              GERAR KEY
+            </button>
           </div>
+
           <p id="actionMessage"></p>
         </section>
-        <section class="panel table-wrap"><div class="toolbar"><h3>Licenças</h3><input id="search" placeholder="Pesquisar key ou cliente"></div><table><thead><tr><th>Cliente</th><th>Key</th><th>Status</th><th>Dias</th><th>HWID</th><th>Ações</th></tr></thead><tbody id="licenseRows"></tbody></table></section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Licenças</h2>
+
+            <input
+              id="search"
+              type="text"
+              placeholder="Pesquisar key ou cliente"
+            >
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Cliente</th>
+                  <th>Key</th>
+                  <th>Status</th>
+                  <th>Dias</th>
+                  <th>HWID</th>
+                  <th>Ações</th>
+                </tr>
+              </thead>
+
+              <tbody id="licenseRows"></tbody>
+            </table>
+          </div>
+        </section>
       </div>
 
-      <div id="logsPage" class="page hidden"><section class="panel"><h3>Logs</h3><div id="allLogs"></div></section></div>
+      <div id="logsPage" class="page hidden">
+        <section class="panel">
+          <h2>Logs</h2>
+          <div id="allLogs" class="logs"></div>
+        </section>
+      </div>
     </main>
   </section>
-  <script src="app.js"></script>
+
+  <script src="/admin.js"></script>
 </body>
 </html>
