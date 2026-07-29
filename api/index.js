@@ -32,49 +32,52 @@ app.use(
    CONFIGURAÇÕES
 ========================= */
 
-function readEnv(...names) {
-  for (const name of names) {
-    const value = process.env[name];
-    if (typeof value === 'string' && value.trim()) return value.trim();
-  }
-  return '';
-}
+const SUPABASE_URL = process.env.SUPABASE_URL || '';
+const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY || '';
+const JWT_SECRET = process.env.JWT_SECRET || '';
+const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 
-const SUPABASE_URL = readEnv('SUPABASE_URL');
-const SUPABASE_SECRET_KEY = readEnv(
-  'SUPABASE_SECRET_KEY',
-  'SUPABASE_SERVICE_ROLE_KEY',
-  'SUPABASE_SERVICE_KEY'
-);
-const JWT_SECRET = readEnv('JWT_SECRET', 'JWT_SECRET_KEY', 'PF_JWT_SECRET');
-const ADMIN_USER = readEnv('ADMIN_USER', 'ADMIN_USERNAME') || 'admin';
-const ADMIN_PASSWORD = readEnv('ADMIN_PASSWORD');
-const ADMIN_PASSWORD_HASH = readEnv('ADMIN_PASSWORD_HASH');
+/*
+Você pode usar:
 
-const missingEnvironmentVariables = () => {
-  const missing = [];
-  if (!SUPABASE_URL) missing.push('SUPABASE_URL');
-  if (!SUPABASE_SECRET_KEY) missing.push('SUPABASE_SECRET_KEY');
-  if (!JWT_SECRET) missing.push('JWT_SECRET');
-  if (!ADMIN_USER) missing.push('ADMIN_USER');
-  if (!ADMIN_PASSWORD && !ADMIN_PASSWORD_HASH) {
-    missing.push('ADMIN_PASSWORD ou ADMIN_PASSWORD_HASH');
-  }
-  return missing;
-};
+ADMIN_PASSWORD=admin123
+
+ou, de forma mais segura:
+
+ADMIN_PASSWORD_HASH=$2a$...
+*/
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
+const ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH || '';
 
 const supabaseConfigured = Boolean(
   SUPABASE_URL && SUPABASE_SECRET_KEY
 );
 
-const supabase = supabaseConfigured
-  ? createClient(SUPABASE_URL, SUPABASE_SECRET_KEY, {
+// Nunca deixe uma configuração inválida derrubar toda a Serverless Function.
+// O cliente é inicializado com proteção, permitindo que /api/health e /api/login
+// continuem respondendo e mostrem o erro correto.
+let supabase = null;
+let supabaseInitError = '';
+
+if (supabaseConfigured) {
+  try {
+    const parsedUrl = new URL(SUPABASE_URL);
+
+    if (parsedUrl.protocol !== 'https:') {
+      throw new Error('SUPABASE_URL precisa começar com https://');
+    }
+
+    supabase = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY, {
       auth: {
         persistSession: false,
         autoRefreshToken: false
       }
-    })
-  : null;
+    });
+  } catch (error) {
+    supabaseInitError = error instanceof Error ? error.message : String(error);
+    console.error('Falha ao iniciar Supabase:', supabaseInitError);
+  }
+}
 
 /* =========================
    CORS
@@ -291,7 +294,7 @@ function adminAuth(req, res, next) {
   if (!JWT_SECRET) {
     return res.status(500).json({
       error:
-        'JWT_SECRET não foi carregado. Apague e recrie essa variável na Vercel e faça um novo Redeploy.'
+        'JWT_SECRET não configurado na Vercel.'
     });
   }
 
@@ -343,12 +346,24 @@ app.get(
       service: 'Precision Fix API',
       version: '3.0.0',
       configuration: {
-        supabase: supabaseConfigured,
+        supabase: Boolean(supabase),
+        supabaseVariablesPresent: supabaseConfigured,
+        supabaseError: supabaseInitError || null,
         jwt: Boolean(JWT_SECRET),
         adminUser: Boolean(ADMIN_USER),
-        adminPassword: Boolean(ADMIN_PASSWORD || ADMIN_PASSWORD_HASH),
-        missing: missingEnvironmentVariables()
-      }
+        adminPassword: Boolean(
+          ADMIN_PASSWORD ||
+          ADMIN_PASSWORD_HASH
+        )
+      },
+      missing: [
+        !SUPABASE_URL ? 'SUPABASE_URL' : null,
+        !SUPABASE_SECRET_KEY ? 'SUPABASE_SECRET_KEY' : null,
+        !JWT_SECRET ? 'JWT_SECRET' : null,
+        !(ADMIN_PASSWORD || ADMIN_PASSWORD_HASH)
+          ? 'ADMIN_PASSWORD ou ADMIN_PASSWORD_HASH'
+          : null
+      ].filter(Boolean)
     });
   }
 );
@@ -364,7 +379,7 @@ app.post(
       if (!JWT_SECRET) {
         return res.status(500).json({
           error:
-            'JWT_SECRET não foi carregado. Apague e recrie essa variável na Vercel e faça um novo Redeploy.'
+            'JWT_SECRET não configurado na Vercel.'
         });
       }
 
